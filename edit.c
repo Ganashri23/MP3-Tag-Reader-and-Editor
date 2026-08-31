@@ -1,212 +1,364 @@
 #include <stdio.h>
-#include<string.h>
-#include<stdlib.h>
+#include <string.h>
+#include <stdlib.h>
 #include "function.h"
+
 void edit_mp3(EditInfo *edit)
 {
     FILE *src = fopen(edit->filename, "rb");
+
     FILE *temp = fopen("temp.mp3", "wb");
+
     if (src == NULL || temp == NULL)
     {
         printf("Error opening file\n");
+
+        if (src != NULL)
+            fclose(src);
+
+        if (temp != NULL)
+            fclose(temp);
+
         return;
     }
+
+    /* Read ID3 header */
     unsigned char header[10];
 
-    fread(header, 1, 10, src); // read from src write in header
-
-        if (header[0] != 'I' ||
-            header[1] != 'D' ||
-            header[2] != '3')
-        {
-            printf("ID3 tag not found\n");
-            fclose(src);
-            fclose(temp);
-            return;
-        }
-
-        if (header[3] != 3)
-        {
-            printf("Only ID3v2.3 supported\n");
-            fclose(src);
-            fclose(temp);
-            return;
-        }
-    fwrite(header, 1, 10, temp); // read from header write in temp
-       int edited =0;
-while(1)
-{
-    char frame_id[5];
-  
-    if (fread(frame_id, 1, 4, src) != 4)
+    if (fread(header, 1, 10, src) != 10)
     {
-        break;
-    }
-    frame_id[4] = '\0';
-    if (frame_id[0] < 'A' || frame_id[0] > 'Z')
-    {
-       break;
-    }
-    //printf("Frame ID: %s\n", frame_id);
+        printf("Error reading file\n");
 
-    unsigned char size[4];
-    if (fread(size, 1, 4, src) != 4)
-    {
-        break;
-    }
-    unsigned char original_size[4];
-    memcpy(original_size, size, 4);
-
-    // convertion of big to little
-    char *ptr = (char *)size;
-
-    for (int i = 0; i < 2; i++)
-    {
-        char temp_byte = ptr[i];
-        ptr[i] = ptr[4 - i - 1];
-        ptr[4 - i - 1] = temp_byte;
-    }
-
-    unsigned int frame_size;
-    memcpy(&frame_size, size, 4);
-    unsigned char flags[2];
-
-    if (fread(flags, 1, 2, src) != 2)
-    {
-       break ;
-    }
-    char *data = malloc(frame_size);
-    if (data == NULL)
-    {
-        printf("Memory allocation failed\n");
         fclose(src);
         fclose(temp);
+
+        remove("temp.mp3");
+
         return;
     }
-    if (fread(data, 1, frame_size, src) != frame_size)
+
+    /* Check ID3 */
+    if (header[0] != 'I' ||
+        header[1] != 'D' ||
+        header[2] != '3')
     {
-        free(data);
+        printf("ID3 tag not found\n");
+
         fclose(src);
         fclose(temp);
+
+        remove("temp.mp3");
+
         return;
     }
-    
-    if ((strcmp(edit->option, "-t") == 0 && strcmp(frame_id, "TIT2") == 0) ||
-    (strcmp(edit->option, "-a") == 0 && strcmp(frame_id, "TPE1") == 0) ||
-    (strcmp(edit->option, "-A") == 0 && strcmp(frame_id, "TALB") == 0) ||
-    (strcmp(edit->option, "-y") == 0 && strcmp(frame_id, "TYER") == 0) ||
-    (strcmp(edit->option, "-g") == 0 && strcmp(frame_id, "TCON") == 0) 
-     )
+
+    /* Check version */
+    if (header[3] != 3)
     {
-        edited = 1;
+        printf("Only ID3v2.3 supported\n");
 
-        
-         unsigned int new_size = strlen(edit->new_info) + 1;
+        fclose(src);
+        fclose(temp);
 
-       // printf("Old size: %u\n", frame_size);
-       // printf("New size: %u\n", new_size);
-            unsigned char new_size_bytes[4];
+        remove("temp.mp3");
 
-            memcpy(new_size_bytes, &new_size, 4);
-            char *ptr = (char *)new_size_bytes;
-        //little to big
-            for (int i = 0; i < 2; i++)
-            {
-                char temp_byte = ptr[i];
-                ptr[i] = ptr[4 - i - 1];
-                ptr[4 - i - 1] = temp_byte;
-            }
+        return;
+    }
 
-            fwrite(frame_id, 1, 4, temp);
-            fwrite(new_size_bytes, 1, 4, temp);
-            fwrite(flags, 1, 2, temp);
-            unsigned char encoding = data[0];
+    /* Write header */
+    fwrite(header, 1, 10, temp);
 
-            fwrite(&encoding, 1, 1, temp);
-            fwrite(edit->new_info, 1, strlen(edit->new_info), temp);
+    int edited = 0;
+
+    while (1)
+    {
+        char frame_id[5];
+
+        /* Read frame ID */
+        if (fread(frame_id, 1, 4, src) != 4)
+        {
+            break;
         }
 
-    // for comment 
-    else if (strcmp(edit->option, "-c") == 0 && strcmp(frame_id, "COMM") == 0)
-    {
-           edited = 1;
-        //printf("Comment frame found\n");
+        frame_id[4] = '\0';
 
-        unsigned int new_size = strlen(edit->new_info) + 5;
+        /* Invalid frame */
+        if (frame_id[0] < 'A' ||
+            frame_id[0] > 'Z')
+        {
+            break;
+        }
 
-        unsigned char new_size_bytes[4];
+        /* Read frame size */
+        unsigned char size[4];
 
-        memcpy(new_size_bytes, &new_size, 4);
+        if (fread(size, 1, 4, src) != 4)
+        {
+            break;
+        }
 
-        char *ptr = (char *)new_size_bytes;
+        unsigned char original_size[4];
+
+        memcpy(original_size, size, 4);
+
+        /* Big endian to little endian */
+        char *ptr = (char *)size;
 
         for (int i = 0; i < 2; i++)
         {
             char temp_byte = ptr[i];
-            ptr[i] = ptr[4 - i - 1];
-            ptr[4 - i - 1] = temp_byte;
+
+            ptr[i] = ptr[3 - i];
+
+            ptr[3 - i] = temp_byte;
         }
 
-        fwrite(frame_id, 1, 4, temp);
-        fwrite(new_size_bytes, 1, 4, temp);
-        fwrite(flags, 1, 2, temp);
+        unsigned int frame_size;
 
-        // Copy encoding
-        fwrite(data, 1, 1, temp);
+        memcpy(&frame_size, size, 4);
 
-        // Copy language
-        fwrite(data + 1, 1, 3, temp);
+        /* Read flags */
+        unsigned char flags[2];
 
-        // Empty description
-        fwrite("\0", 1, 1, temp);
+        if (fread(flags, 1, 2, src) != 2)
+        {
+            break;
+        }
 
-        // New comment
-        fwrite(edit->new_info, 1, strlen(edit->new_info), temp);
+        char *data = malloc(frame_size);
+
+        if (data == NULL)
+        {
+            printf("Memory allocation failed\n");
+
+            fclose(src);
+            fclose(temp);
+
+            remove("temp.mp3");
+
+            return;
+        }
+
+        if (fread(data, 1, frame_size, src) != frame_size)
+        {
+            free(data);
+
+            fclose(src);
+            fclose(temp);
+
+            remove("temp.mp3");
+
+            return;
+        }
+
+        /*
+           EDIT TEXT FRAMES
+        */
+        if ((strcmp(edit->option, "-t") == 0 &&
+             strcmp(frame_id, "TIT2") == 0) ||
+
+            (strcmp(edit->option, "-a") == 0 &&
+             strcmp(frame_id, "TPE1") == 0) ||
+
+            (strcmp(edit->option, "-A") == 0 &&
+             strcmp(frame_id, "TALB") == 0) ||
+
+            (strcmp(edit->option, "-y") == 0 &&
+             strcmp(frame_id, "TYER") == 0) ||
+
+            (strcmp(edit->option, "-g") == 0 &&
+             strcmp(frame_id, "TCON") == 0))
+        {
+            edited = 1;
+
+            /*
+               Encoding byte + new text
+            */
+            unsigned int new_size =
+                strlen(edit->new_info) + 1;
+
+            unsigned char new_size_bytes[4];
+
+            memcpy(new_size_bytes,
+                   &new_size,
+                   4);
+
+            /* Little endian to big endian */
+            char *ptr2 =
+                (char *)new_size_bytes;
+
+            for (int i = 0; i < 2; i++)
+            {
+                char temp_byte = ptr2[i];
+
+                ptr2[i] = ptr2[3 - i];
+
+                ptr2[3 - i] = temp_byte;
+            }
+
+            /* Frame ID */
+            fwrite(frame_id, 1, 4, temp);
+
+            /* New frame size */
+            fwrite(new_size_bytes, 1, 4, temp);
+
+            /* Flags */
+            fwrite(flags, 1, 2, temp);
+
+            /* Keep original encoding */
+            unsigned char encoding = data[0];
+
+            fwrite(&encoding, 1, 1, temp);
+
+            /* New value */
+            fwrite(edit->new_info,
+                   1,
+                   strlen(edit->new_info),
+                   temp);
+        }
+
+        /*
+           EDIT COMMENT
+        */
+        else if (strcmp(edit->option, "-c") == 0 &&
+                 strcmp(frame_id, "COMM") == 0)
+        {
+            edited = 1;
+
+            /*
+               encoding = 1
+               language = 3
+               description = 1
+               new comment = strlen
+            */
+            unsigned int new_size =
+                strlen(edit->new_info) + 5;
+
+            unsigned char new_size_bytes[4];
+
+            memcpy(new_size_bytes,
+                   &new_size,
+                   4);
+
+            /* Little endian to big endian */
+            char *ptr2 =
+                (char *)new_size_bytes;
+
+            for (int i = 0; i < 2; i++)
+            {
+                char temp_byte = ptr2[i];
+
+                ptr2[i] = ptr2[3 - i];
+
+                ptr2[3 - i] = temp_byte;
+            }
+
+            /* Frame ID */
+            fwrite(frame_id, 1, 4, temp);
+
+            /* New size */
+            fwrite(new_size_bytes, 1, 4, temp);
+
+            /* Flags */
+            fwrite(flags, 1, 2, temp);
+
+            /* Encoding */
+            fwrite(data, 1, 1, temp);
+
+            /* Language */
+            fwrite(data + 1, 1, 3, temp);
+
+            /* Empty description */
+            fwrite("\0", 1, 1, temp);
+
+            /* New comment */
+            fwrite(edit->new_info,
+                   1,
+                   strlen(edit->new_info),
+                   temp);
+        }
+
+        /*
+           COPY UNCHANGED FRAME
+        */
+        else
+        {
+            fwrite(frame_id, 1, 4, temp);
+
+            fwrite(original_size,
+                   1,
+                   4,
+                   temp);
+
+            fwrite(flags, 1, 2, temp);
+
+            fwrite(data,
+                   1,
+                   frame_size,
+                   temp);
+        }
+
+        free(data);
     }
-        // read remaining data
-    else
-    {
-    fwrite(frame_id, 1, 4, temp);
-    fwrite(original_size, 1, 4, temp);
-    fwrite(flags, 1, 2, temp);
-    fwrite(data, 1, frame_size, temp);
-    }
-    free(data);
-    }
 
-    // shouldn't replace the original sample.mp3 if edited == 0, because nothing was changed.
+    /*
+       No required tag was found
+    */
     if (edited == 0)
     {
         fclose(src);
         fclose(temp);
+
         remove("temp.mp3");
 
-        printf("Required tag not found\n"); // if comm was not there
+        printf("Required tag not found\n");
+
         return;
     }
-// copying audio data segment 3
+
+    /*
+       Copy remaining MP3 audio data
+    */
     char buffer[1024];
+
     size_t bytes;
 
-    while ((bytes = fread(buffer, 1, sizeof(buffer), src)) > 0)
+    while ((bytes = fread(buffer,
+                          1,
+                          sizeof(buffer),
+                          src)) > 0)
     {
-        fwrite(buffer, 1, bytes, temp);
+        fwrite(buffer,
+               1,
+               bytes,
+               temp);
     }
 
     fclose(src);
     fclose(temp);
-// renaming and removing
+
+    /*
+       Delete original file
+    */
     if (remove(edit->filename) != 0)
     {
         printf("Error deleting original file\n");
+
+        remove("temp.mp3");
+
         return;
     }
 
-    if (rename("temp.mp3", edit->filename) != 0)
+    /*
+       Rename temporary file
+    */
+    if (rename("temp.mp3",
+               edit->filename) != 0)
     {
         printf("Error renaming temp file\n");
+
         return;
     }
 
     printf("MP3 file updated successfully\n");
-    }
+}
